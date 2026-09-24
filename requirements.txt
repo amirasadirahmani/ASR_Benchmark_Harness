@@ -1,0 +1,30 @@
+# ---------- Core ----------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+PyYAML==6.0.2
+python-multipart==0.0.20
+psutil==6.1.1
+numpy==1.26.4
+soundfile==0.12.1
+
+# ---------- VAD (no model download needed) ----------
+webrtcvad-wheels==2.0.14
+
+# ---------- ASR runtime (primary) ----------
+faster-whisper==1.1.1
+ctranslate2==4.5.0
+
+# ---------- ASR runtime (reference adapter, optional but recommended) ----------
+transformers==4.47.1
+torch==2.5.1
+torchaudio==2.5.1
+
+# ---------- Wake word engine (optional, offline) ----------
+vosk==0.3.45
+
+# ---------- Optional: silero VAD via onnx ----------
+onnxruntime==1.20.1
+
+# ---------- Dev / Test ----------
+pytest==8.3.4

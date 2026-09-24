@@ -1,0 +1,83 @@
+offline_mode: true
+language: "fa"
+strict_offline_guard: true
+
+server:
+  host: "127.0.0.1"
+  port: 8000
+  reload: false
+  log_level: "info"
+  allow_external_bind: false
+
+paths:
+  models_dir: "models"
+  recordings_dir: "recordings"
+  results_dir: "results"
+  frontend_dir: "frontend"
+  logs_dir: "logs"
+  cache_dir: ".cache"
+
+audio:
+  sample_rate: 16000          # SAMPLE_RATE
+  channels: 1                 # CHANNELS
+  sample_width: 2
+  frame_ms: 20
+  max_command_seconds: 30.0
+  min_command_seconds: 0.30
+  pre_roll_seconds: 1.5       # PRE_ROLL_SECONDS
+  save_recordings: true
+
+vad:
+  engine: "webrtc"            # webrtc | silero | energy
+  aggressiveness: 2
+  silence_duration: 2.0       # SILENCE_DURATION  ← بند ۹
+  speech_start_frames: 3
+  energy_threshold_dbfs: -45.0
+  post_wake_speech_timeout: 6.0
+
+wake_word:
+  enabled: true
+  word: "آرینا"               # WAKE_WORD
+  engine: "vosk"              # vosk | dtw | manual
+  aliases: ["آرینا", "ارینا", "آرینه", "ارینا", "آرنا"]
+  vosk_model_path: "models/wakeword/vosk-model-small-fa"
+  dtw_templates_dir: "models/wakeword/dtw_templates"
+  dtw_threshold: 0.42
+  cooldown_seconds: 1.5
+  listen_timeout: 0.0
+
+benchmark:
+  mode: "sequential"
+  runs_per_utterance: 1
+  warmup_enabled: true
+  warmup_audio_seconds: 1.0
+  rotate_model_order: true
+  rotation_strategy: "rotate"
+  worker_timeout_seconds: 300.0
+  isolate_workers: true
+  sample_ram_interval: 0.05
+  runs_per_model: 1
+  warmup_enabled: true
+  warmup_seconds: 1.0
+  model_timeout: 300.0
+  mp_context: spawn
+  ram_sample_interval: 0.05
+  isolated: true
+  
+normalizer:
+  profile: "default"
+  zwnj_policy: "space"
+  remove_punctuation: true
+  unify_alef_hamza: true
+  unify_alef_madda: false
+  digits_to: "ascii"
+  remove_diacritics: true
+
+ui:
+  title: "سامانه مقایسه مدل‌های تشخیص گفتار فارسی"
+  language: "fa"
+  direction: "rtl"
+  no_reference_message: "جمله مبدا برای مقایسه و اعلام نتیجه وجود نداشت."
+  show_raw_transcription: true
+
+models_config_file: "backend/config/models.yaml"
