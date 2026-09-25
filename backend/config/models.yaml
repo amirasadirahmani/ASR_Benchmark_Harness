@@ -95,3 +95,20 @@ models:
       vad_filter: false
       without_timestamps: true
     notes: "فقط برای MacBook؛ روی RPi5 8GB توصیه نمی‌شود"
+
+# ------------------------- مدل ۵ (Dummy همیشه‌حاضر) -------------------------
+  # مدل تشخیصی ثابت — برای Smoke Test سرور بدون نیاز به دانلود مدل واقعی.
+  # هرگز از رجیستری حذف نشود؛ در تست‌های سرتاسری (E2E) به آن وابسته‌ایم.
+  - id: "dummy-echo"
+    display_name: "پژواک آزمایشی (Dummy)"
+    enabled: true
+    runtime: "dummy"
+    local_path: "models/dummy"
+    device: "cpu"
+    compute_type: "int8"
+    order: 999
+    params:
+      fake_ram_mb: 30
+      fake_rtf: 0.2
+      load_delay: 0.15
+    notes: "بدون وابستگی خارجی؛ برای تست زنجیرهٔ کامل WebSocket/Orchestrator/Storage"

@@ -24,7 +24,7 @@ async def main() -> None:
     s.benchmark.model_timeout = 60.0
 
     art = AudioArtifact(pcm=make_warmup_tone(2.0), session_id="t", utterance_id="u1")
-    path = art.save(s.paths.temp_dir)
+    path = art.save(s.paths.temp_path)
     print(f"فایل صوتی مشترک: {path.name} | sha={art.sha256[:12]}")
 
     # ── ۱) Worker منفرد ───────────────────────────────────────────

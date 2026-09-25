@@ -314,7 +314,7 @@ class AudioSession:
 
         if self.settings.audio.save_recordings:
             try:
-                artifact.save(self.settings.paths.recordings_dir)
+                artifact.save(self.settings.paths.recordings_path)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("ذخیرهٔ فایل صوتی ناموفق بود: %s", exc)
 

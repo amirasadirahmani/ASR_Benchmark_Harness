@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head><meta charset="utf-8"><title>ASR Benchmark</title></head>
+<body>
+<h2>تست اتصال WebSocket</h2>
+<pre id="log" style="height:300px;overflow:auto;background:#111;color:#0f0;padding:8px;"></pre>
+<script>
+const log = (m) => { document.getElementById('log').textContent += m + "\n"; };
+const ws = new WebSocket(`ws://${location.host}/ws/session`);
+ws.onopen = () => log("✅ متصل شد");
+ws.onmessage = (e) => log("📩 " + e.data);
+ws.onerror = (e) => log("❌ خطا");
+ws.onclose = () => log("🔌 قطع شد");
+</script>
+</body>
+</html>

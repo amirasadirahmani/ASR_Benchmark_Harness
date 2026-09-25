@@ -33,10 +33,16 @@ class ServerSettings(BaseModel):
 class PathSettings(BaseModel):
     models_dir: Path = Path("models")
     recordings_dir: Path = Path("recordings")
+    temp_dir: Path = Path("temp")
     results_dir: Path = Path("results")
     frontend_dir: Path = Path("frontend")
     logs_dir: Path = Path("logs")
     cache_dir: Path = Path(".cache")
+
+    @property
+    def temp_path(self) -> Path:
+        """نام جایگزین برای سازگاری با کدهایی که از temp_path استفاده می‌کنند."""
+        return self.temp_dir
 
     def resolve_all(self, root: Path) -> "PathSettings":
         """تبدیل مسیرهای نسبی به مطلق نسبت به ریشه پروژه."""
@@ -51,7 +57,6 @@ class PathSettings(BaseModel):
             if name == "frontend_dir":
                 continue  # frontend باید از قبل وجود داشته باشد
             Path(value).mkdir(parents=True, exist_ok=True)
-
 
 class AudioSettings(BaseModel):
     sample_rate: int = 16000

@@ -384,7 +384,7 @@ class BenchmarkOrchestrator:
         """
         if artifact.path and Path(artifact.path).exists():
             return Path(artifact.path)
-        tmp_dir = self.settings.paths.temp_dir
+        tmp_dir = self.settings.paths.temp_path
         tmp_dir.mkdir(parents=True, exist_ok=True)
         name = f"{artifact.utterance_id or artifact.sha256[:12]}.wav"
         path = write_wav(tmp_dir / name, artifact.pcm,
@@ -398,7 +398,7 @@ class BenchmarkOrchestrator:
             return None
         if self._warmup_path and self._warmup_path.exists():
             return self._warmup_path
-        d = self.settings.paths.temp_dir
+        d = self.settings.paths.temp_path
         d.mkdir(parents=True, exist_ok=True)
         self._warmup_path = write_wav(
             d / "_warmup.wav",

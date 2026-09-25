@@ -16,6 +16,8 @@ paths:
   frontend_dir: "frontend"
   logs_dir: "logs"
   cache_dir: ".cache"
+  temp_dir: data/temp
+  wakeword_dir: models/wakeword
 
 audio:
   sample_rate: 16000          # SAMPLE_RATE
@@ -63,7 +65,7 @@ benchmark:
   mp_context: spawn
   ram_sample_interval: 0.05
   isolated: true
-  
+
 normalizer:
   profile: "default"
   zwnj_policy: "space"
