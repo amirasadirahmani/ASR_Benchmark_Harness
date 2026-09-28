@@ -1,18 +1,8 @@
 """
-رجیستری Runtimeهای ASR — قلب گسترش‌پذیری سامانه (بند ۱۱ و ۲۵).
+رجیستری Runtimeهای ASR — قلب گسترش‌پذیری سامانه.
 
-افزودن Runtime جدید:
-
-    from backend.asr.base import BaseASRAdapter
-    from backend.asr.registry import register_runtime
-
-    @register_runtime("my_engine")
-    class MyAdapter(BaseASRAdapter):
-        def _load_model(self): ...
-        def _transcribe(self, audio_path): ...
-
-سپس در models.yaml:  runtime: "my_engine"
-هیچ تغییر دیگری لازم نیست.
+افزودن Runtime جدید با register_runtime انجام می‌شود و سپس فقط runtime متناظر
+در models.yaml تنظیم می‌شود.
 """
 
 from __future__ import annotations
@@ -20,7 +10,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Type
 
 from backend.asr.base import ASRAdapterError, BaseASRAdapter
 from backend.config.model_config import ModelConfig
@@ -30,7 +20,6 @@ _DISCOVERED = False
 
 
 def register_runtime(name: str) -> Callable[[Type[BaseASRAdapter]], Type[BaseASRAdapter]]:
-    """دکوراتور ثبت یک کلاس آداپتور تحت نام Runtime مشخص."""
     key = name.strip().lower()
 
     def decorator(cls: Type[BaseASRAdapter]) -> Type[BaseASRAdapter]:
@@ -50,11 +39,6 @@ def register_runtime(name: str) -> Callable[[Type[BaseASRAdapter]], Type[BaseASR
 
 
 def discover_adapters(force: bool = False) -> None:
-    """
-    بارگذاری خودکار همهٔ ماژول‌های داخل backend/asr/adapters/.
-    خطای import (مثلاً نبودن torch) نادیده گرفته می‌شود تا نبودِ یک
-    کتابخانهٔ اختیاری کل سامانه را از کار نیندازد.
-    """
     global _DISCOVERED
     if _DISCOVERED and not force:
         return
@@ -66,7 +50,7 @@ def discover_adapters(force: bool = False) -> None:
                 continue
             try:
                 importlib.import_module(f"backend.asr.adapters.{mod.name}")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning(
                     "آداپتور «%s» بارگذاری نشد: %s", mod.name, exc
@@ -75,13 +59,11 @@ def discover_adapters(force: bool = False) -> None:
 
 
 def available_runtimes() -> List[str]:
-    """فهرست Runtimeهای ثبت‌شده و قابل استفاده."""
     discover_adapters()
     return sorted(_REGISTRY.keys())
 
 
 def get_adapter_class(runtime: str) -> Type[BaseASRAdapter]:
-    """کلاس آداپتور مربوط به یک Runtime."""
     discover_adapters()
     key = runtime.strip().lower()
     if key not in _REGISTRY:
@@ -93,7 +75,6 @@ def get_adapter_class(runtime: str) -> Type[BaseASRAdapter]:
 
 
 def create_adapter(config: ModelConfig) -> BaseASRAdapter:
-    """ساخت آداپتور از روی پیکربندی مدل (مسیر اصلی ساخت در Orchestrator)."""
     cls = get_adapter_class(config.runtime)
     return cls(
         model_id=config.id,
@@ -106,10 +87,6 @@ def create_adapter(config: ModelConfig) -> BaseASRAdapter:
 
 
 def create_adapter_from_payload(payload: Dict[str, Any]) -> BaseASRAdapter:
-    """
-    ساخت آداپتور از دیکشنری picklable — برای Worker Process.
-    (خروجی ModelConfig.to_worker_payload)
-    """
     cls = get_adapter_class(payload["runtime"])
     return cls(
         model_id=payload["id"],
@@ -122,12 +99,6 @@ def create_adapter_from_payload(payload: Dict[str, Any]) -> BaseASRAdapter:
 
 
 def validate_registry(configs: List[ModelConfig]) -> Dict[str, List[str]]:
-    """
-    اعتبارسنجی رجیستری مدل‌ها در زمان بالا آمدن سرور.
-
-    Returns:
-        {"ok": [...], "missing_runtime": [...], "missing_files": [...]}
-    """
     discover_adapters()
     report: Dict[str, List[str]] = {
         "ok": [], "missing_runtime": [], "missing_files": [], "disabled": [],
@@ -138,7 +109,7 @@ def validate_registry(configs: List[ModelConfig]) -> Dict[str, List[str]]:
             continue
         if cfg.runtime.strip().lower() not in _REGISTRY:
             report["missing_runtime"].append(cfg.id)
-        elif not cfg.exists():
+        elif cfg.runtime.strip().lower() != "dummy" and not cfg.exists():
             report["missing_files"].append(cfg.id)
         else:
             report["ok"].append(cfg.id)

@@ -46,9 +46,6 @@ from backend.config.settings import AppSettings
 from backend.storage import ResultsStore
 
 logger = logging.getLogger(__name__)
-
-# حداکثر پیام‌های صف‌شده قبل از ارسال — جلوگیری از مصرف نامحدود حافظه
-# اگر کلاینت کند/قطع باشد و رویدادها انباشته شوند.
 _MAX_QUEUE_SIZE = 200
 
 
@@ -64,25 +61,21 @@ class ConnectionHandler:
         self.ws = websocket
         self.settings = settings
         self.store = store
-
         self._loop = asyncio.get_event_loop()
         self._out_queue: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue(
             maxsize=_MAX_QUEUE_SIZE
         )
         self._reference_text: Optional[str] = None
         self._selected_model_ids: Optional[list[str]] = None
+        self._current_artifact: Optional[Any] = None
         self._closed = False
-
         self.session = AudioSession(
             settings=settings,
-            on_event=self._on_session_event,   # ممکن است از هر تردی صدا زده شود
-            on_utterance=self._on_utterance,   # این باید async باشد یا از _spawn استفاده کند
+            on_event=self._on_session_event,
+            on_utterance=self._on_utterance,
         )
         self._bg_tasks: set[asyncio.Task] = set()
 
-    # ------------------------------------------------------------------
-    # چرخهٔ اصلی اتصال
-    # ------------------------------------------------------------------
     async def run(self) -> None:
         await self.ws.accept()
         sender_task = asyncio.create_task(self._sender_loop())
@@ -90,7 +83,7 @@ class ConnectionHandler:
 
         try:
             await self.session.start()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("راه‌اندازی AudioSession ناموفق")
             await self._emit(ErrorEvent(
                 error_type="session_start_failed",
@@ -104,7 +97,7 @@ class ConnectionHandler:
             await self._receive_loop()
         except WebSocketDisconnect:
             logger.info("کلاینت قطع شد: session=%s", getattr(self.session, "session_id", "?"))
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("خطای غیرمنتظره در حلقهٔ دریافت")
         finally:
             await self._shutdown("disconnect")
@@ -113,22 +106,17 @@ class ConnectionHandler:
     async def _receive_loop(self) -> None:
         while not self._closed:
             message = await self.ws.receive()
-
             if message.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect()
-
             if (data := message.get("bytes")) is not None:
                 await self._handle_audio_frame(data)
             elif (text := message.get("text")) is not None:
                 await self._handle_text_message(text)
 
-    # ------------------------------------------------------------------
-    # ورودی صوت
-    # ------------------------------------------------------------------
     async def _handle_audio_frame(self, data: bytes) -> None:
         try:
             await self.session.feed(data)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("خطا در feed صوت")
             await self._emit(ErrorEvent(
                 error_type="audio_feed_failed",
@@ -136,9 +124,6 @@ class ConnectionHandler:
                 recoverable=True,
             ))
 
-    # ------------------------------------------------------------------
-    # ورودی متنی/کنترلی
-    # ------------------------------------------------------------------
     async def _handle_text_message(self, text: str) -> None:
         import json
 
@@ -156,40 +141,27 @@ class ConnectionHandler:
         if isinstance(msg, SetReferenceMsg):
             self._reference_text = msg.text
             self.session.set_reference(msg.text)
-
         elif isinstance(msg, TriggerWakeMsg):
             await self.session.trigger_wake()
-
         elif isinstance(msg, StopSessionMsg):
             await self._shutdown("client_request")
-
         elif isinstance(msg, SelectModelsMsg):
             self._selected_model_ids = msg.model_ids or None
-
         elif isinstance(msg, ConfigOverrideMsg):
             self.session.apply_config_override(
                 vad_silence_duration=msg.vad_silence_duration,
                 wakeword_enabled=msg.wakeword_enabled,
             )
-
-        else:  # PingMsg
+        else:
             await self._emit(PongEvent())
 
-    # ------------------------------------------------------------------
-    # callback از AudioSession — ممکن است sync/از ترد دیگر صدا زده شود
-    # ------------------------------------------------------------------
     async def _on_session_event(self, event: Any) -> None:
-        """
-        پل بین دنیای sync (AudioSession) و asyncio (WebSocket).
-
-        `event` می‌تواند یک دیکشنری خام یا یک شیء ServerEvent باشد؛
-        هر دو حالت پشتیبانی می‌شود تا با پیاده‌سازی فعلی AudioSession سازگار باشد.
-        """
         payload = event.model_dump() if hasattr(event, "model_dump") else dict(event)
+        if "type" not in payload and "event" in payload:
+            payload["type"] = payload["event"]
         try:
             self._loop.call_soon_threadsafe(self._enqueue_nowait, payload)
         except RuntimeError:
-            # event loop بسته شده — اتصال احتمالاً در حال shutdown است
             pass
 
     def _enqueue_nowait(self, payload: Dict[str, Any]) -> None:
@@ -204,7 +176,6 @@ class ConnectionHandler:
                 pass
 
     async def _emit(self, event: Any) -> None:
-        """ارسال مستقیم رویداد از داخل کانتکست async (بدون رفتن به صف ترد-امن)."""
         payload = event.model_dump() if hasattr(event, "model_dump") else dict(event)
         await self._enqueue_async(payload)
 
@@ -222,19 +193,12 @@ class ConnectionHandler:
                 await self.ws.send_json(payload)
         except asyncio.CancelledError:
             pass
-        except Exception:  # noqa: BLE001
+        except WebSocketDisconnect:
+            logger.debug("اتصال WebSocket عادی قطع شد (sender_loop)")
+        except Exception:
             logger.exception("خطا در sender_loop")
 
-    # ------------------------------------------------------------------
-    # وقتی یک گفتار کامل ضبط شد → Benchmark اجرا کن
-    # ------------------------------------------------------------------
     async def _on_utterance(self, artifact: Any) -> None:
-        """
-        callback از AudioSession وقتی VAD تشخیص سکوت داد و گفتار کامل شد.
-
-        این تابع sync است (فرض بر این‌که AudioSession از ترد جدا صدا می‌زند)
-        و یک تسک async روی event loop اصلی زمان‌بندی می‌کند.
-        """
         try:
             fut = asyncio.run_coroutine_threadsafe(
                 self._run_benchmark(artifact), self._loop
@@ -254,39 +218,73 @@ class ConnectionHandler:
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
 
-    async def _run_benchmark(self, artifact: Any) -> None:
-        orchestrator = BenchmarkOrchestrator(settings=self.settings)
-        try:
-            async def on_progress(kind: str, payload: Dict[str, Any]) -> None:
-                # اگر orchestrator این callback را پشتیبانی نکند، پایین fallback داریم
-                if kind == "model_started":
-                    await self._emit(ModelStartedEvent(**payload))
-                elif kind == "model_completed":
-                    await self._emit(ModelCompletedEvent(**payload))
+    async def _on_orchestrator_progress(self, payload: Dict[str, Any]) -> None:
+        event = payload.get("event")
 
+        if event == "benchmark_started":
+            models = payload.get("models") or []
             await self._emit(BenchmarkStartedEvent(
-                benchmark_id=getattr(artifact, "utterance_id", "unknown"),
-                utterance_id=getattr(artifact, "utterance_id", "unknown"),
-                models_total=0,
-                model_ids=self._selected_model_ids or [],
+                benchmark_id=payload.get("benchmark_id", ""),
+                utterance_id=getattr(self._current_artifact, "utterance_id", "") or "",
+                models_total=len(models),
+                model_ids=[m.get("id") for m in models if m.get("id")],
             ))
+            return
 
-            try:
-                report = await orchestrator.run(
-                    artifact,
-                    reference_text=self._reference_text,
-                    model_ids=self._selected_model_ids,
-                    on_progress=on_progress,
-                )
-            except TypeError:
-                # orchestrator.run فعلاً on_progress را پشتیبانی نمی‌کند —
-                # بدون رویدادهای per-model، فقط رویداد نهایی را می‌فرستیم.
-                logger.info("Orchestrator.run بدون on_progress صدا زده شد (fallback)")
-                report = await orchestrator.run(
-                    artifact,
-                    reference_text=self._reference_text,
-                    model_ids=self._selected_model_ids,
-                )
+        if event == "model_started":
+            await self._emit(ModelStartedEvent(
+                benchmark_id=payload.get("benchmark_id", ""),
+                model_id=payload.get("model_id", ""),
+                display_name=payload.get("display_name", ""),
+                index=payload.get("index", 0),
+                total=payload.get("total", 0),
+            ))
+            return
+
+        if event == "model_result":
+            result = payload.get("result") or {}
+            metrics = result.get("metrics") or {}
+            await self._emit(ModelCompletedEvent(
+                benchmark_id=payload.get("benchmark_id", ""),
+                model_id=result.get("model_id", ""),
+                display_name=result.get("display_name", ""),
+                success=bool(result.get("success")),
+                error_type=result.get("error_type"),
+                error=result.get("error"),
+                text=result.get("text"),
+                wer=metrics.get("wer"),
+                cer=metrics.get("cer"),
+                rtf=result.get("rtf"),
+                load_time=result.get("load_time"),
+                inference_time=result.get("inference_time"),
+                peak_ram_mb=result.get("peak_ram_mb"),
+            ))
+            return
+
+        if event == "benchmark_error":
+            await self._emit(ErrorEvent(
+                error_type="benchmark_error",
+                message=payload.get("message", "خطای نامشخص در Benchmark"),
+                recoverable=True,
+            ))
+            return
+
+        if event == "benchmark_completed":
+            return
+
+        await self._enqueue_async({**payload, "type": event or "progress"})
+
+    async def _run_benchmark(self, artifact: Any) -> None:
+        self._current_artifact = artifact
+        orchestrator = BenchmarkOrchestrator(
+            settings=self.settings, on_progress=self._on_orchestrator_progress,
+        )
+        try:
+            report = await orchestrator.run(
+                artifact,
+                reference_text=self._reference_text,
+                model_ids=self._selected_model_ids,
+            )
 
             paths = self.store.save(report)
             logger.info("نتیجه ذخیره شد: %s", paths.json_path)
@@ -307,7 +305,7 @@ class ConnectionHandler:
                 no_reference_message=data.get("no_reference_message"),
             ))
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("اجرای Benchmark با خطا مواجه شد")
             await self._emit(ErrorEvent(
                 error_type="benchmark_failed",
@@ -316,8 +314,9 @@ class ConnectionHandler:
             ))
         finally:
             orchestrator.close()
+            if not self._closed:
+                await self.session.resume()
 
-    # ------------------------------------------------------------------
     def _track(self, task: asyncio.Task) -> None:
         self._bg_tasks.add(task)
         task.add_done_callback(self._bg_tasks.discard)
@@ -328,14 +327,13 @@ class ConnectionHandler:
         self._closed = True
         try:
             self.session.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.exception("خطا در بستن AudioSession")
 
         try:
             await self._emit(SessionEndedEvent(reason=reason))
-            # زمان کوتاه برای flush شدن صف قبل از قطع واقعی سوکت
             await asyncio.sleep(0.05)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
         for t in list(self._bg_tasks):

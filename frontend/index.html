@@ -1,16 +1,130 @@
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
-<head><meta charset="utf-8"><title>ASR Benchmark</title></head>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>آرینا · محک ASR فارسی</title>
+<link rel="stylesheet" href="vendor/bootstrap/css/bootstrap.rtl.min.css" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
 <body>
-<h2>تست اتصال WebSocket</h2>
-<pre id="log" style="height:300px;overflow:auto;background:#111;color:#0f0;padding:8px;"></pre>
-<script>
-const log = (m) => { document.getElementById('log').textContent += m + "\n"; };
-const ws = new WebSocket(`ws://${location.host}/ws/session`);
-ws.onopen = () => log("✅ متصل شد");
-ws.onmessage = (e) => log("📩 " + e.data);
-ws.onerror = (e) => log("❌ خطا");
-ws.onclose = () => log("🔌 قطع شد");
-</script>
+<div class="container-app">
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark">آ</span>
+      <div>
+        <h1>آرینا · محک ASR فارسی</h1>
+        <div class="sub">مقایسهٔ آفلاین مدل‌های تشخیص گفتار فارسی</div>
+      </div>
+    </div>
+    <div class="status-pill" data-state="idle" id="statusPill">
+      <span class="status-dot"></span>
+      <span id="statusText">آماده</span>
+    </div>
+  </header>
+
+  <div class="mode-tabs">
+    <button class="mode-tab active" data-mode="assistant" id="tabAssistant">حالت دستیار (میکروفون زنده)</button>
+    <button class="mode-tab" data-mode="benchmark" id="tabBenchmark">حالت محک‌زنی (فایل صوتی)</button>
+  </div>
+
+  <section class="mode-panel active" id="panelAssistant">
+    <div class="control-card">
+      <div class="control-row">
+        <div class="field" style="flex: 2 1 320px;">
+          <label for="refTextAssistant">متن مرجع (اختیاری — برای محاسبهٔ WER/CER)</label>
+          <textarea id="refTextAssistant" rows="1" placeholder="مثلاً: آرینا چراغ رو خاموش کن"></textarea>
+        </div>
+        <div class="field" style="flex: 0 0 auto;">
+          <label>&nbsp;</label>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-primary" id="btnStartSession">شروع جلسه 🎙️</button>
+            <button class="btn btn-danger" id="btnStopSession" style="display:none;">پایان جلسه</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top: 14px;">
+        <label>مدل‌های فعال در این جلسه</label>
+        <div class="model-picker" id="modelPickerAssistant"></div>
+      </div>
+
+      <div class="ref-warning" id="refWarningAssistant">
+        <span>⚠</span>
+        <span>بدون متن مرجع، WER/CER محاسبه نمی‌شود — فقط زمان و حافظه گزارش می‌شود.</span>
+      </div>
+    </div>
+
+    <div class="level-strip" data-active="0" id="levelStrip">
+      <div class="level-label" id="levelLabel">در انتظار شروع جلسه</div>
+      <div class="level-meter"><div class="level-bars" id="levelBars"></div></div>
+      <button class="btn btn-ghost" id="btnTriggerWake" style="display:none;">فعال‌سازی دستی</button>
+    </div>
+  </section>
+
+  <section class="mode-panel" id="panelBenchmark">
+    <div class="control-card">
+      <div class="control-row">
+        <div class="field">
+          <label for="audioFile">فایل صوتی (WAV، تک‌کاناله، ۱۶بیتی)</label>
+          <input type="file" id="audioFile" accept="audio/wav,.wav" />
+        </div>
+        <div class="field">
+          <label for="refTextBenchmark">متن مرجع (اختیاری)</label>
+          <input type="text" id="refTextBenchmark" placeholder="متن دقیق گفته‌شده در فایل" />
+        </div>
+        <div class="field" style="flex: 0 0 auto;">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" id="btnRunBenchmark">اجرای محک ▶</button>
+        </div>
+      </div>
+
+      <div class="field" style="margin-top: 14px;">
+        <label>مدل‌های موردنظر</label>
+        <div class="model-picker" id="modelPickerBenchmark"></div>
+      </div>
+
+      <div class="ref-warning" id="refWarningBenchmark">
+        <span>⚠</span>
+        <span>بدون متن مرجع، WER/CER محاسبه نمی‌شود — فقط زمان و حافظه گزارش می‌شود.</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="error-banner" id="errorBanner"></div>
+  <div class="summary-banner" id="summaryBanner"></div>
+
+  <div class="results-heading">
+    <h2>نتایج</h2>
+    <span class="hint" id="resultsHint"></span>
+  </div>
+  <div class="card-row" id="cardRow"></div>
+  <div class="empty-state" id="emptyState">هنوز اجرایی انجام نشده — یک جلسهٔ دستیار را شروع کنید یا یک فایل صوتی محک بزنید.</div>
+
+  <div class="table-wrap" id="tableWrap" style="display:none; margin-top: 18px;">
+    <table class="compare" id="compareTable">
+      <thead>
+        <tr>
+          <th data-key="displayName">مدل</th>
+          <th data-key="wer">WER٪</th>
+          <th data-key="cer">CER٪</th>
+          <th data-key="rtf">RTF</th>
+          <th data-key="loadTime">بارگذاری (ث)</th>
+          <th data-key="inferenceTime">استنتاج (ث)</th>
+          <th data-key="peakRamMb">حافظهٔ اوج (MB)</th>
+        </tr>
+      </thead>
+      <tbody id="compareBody"></tbody>
+    </table>
+  </div>
+
+  <footer class="app-footer">
+    <span>اجرا کاملاً محلی و آفلاین — هیچ صوتی از این دستگاه خارج نمی‌شود.</span>
+    <span id="footerMeta"></span>
+  </footer>
+</div>
+
+<script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>

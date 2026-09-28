@@ -1,21 +1,5 @@
 """
 مدیریت نشست صوتی — ماشین حالت مرکزی خط لولهٔ صدا.
-
-جریان کامل (بندهای ۷ تا ۱۰):
-
-    IDLE ──start()──► WAITING_WAKE ──[«آرینا»]──► LISTENING
-                            ▲                          │
-                            │                     [۲ ثانیه سکوت]
-                            └──────────────────── FINALIZING
-                                                       │
-                                                       ▼
-                                              AudioArtifact (sha256)
-                                                       │
-                                                       ▼
-                                              BenchmarkOrchestrator
-
-نکتهٔ کلیدی: در لحظهٔ trigger، محتوای PreRollBuffer به ابتدای ضبط الصاق
-می‌شود تا هجاهای ابتدایی فرمان از دست نرود.
 """
 
 from __future__ import annotations
@@ -25,7 +9,6 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from backend.audio.audio_utils import (
@@ -44,10 +27,10 @@ logger = logging.getLogger(__name__)
 
 class SessionState(str, Enum):
     IDLE = "idle"
-    WAITING_WAKE = "waiting_wake"       # منتظر «آرینا»
-    LISTENING = "listening"             # در حال ضبط فرمان
-    FINALIZING = "finalizing"           # آماده‌سازی artifact
-    PROCESSING = "processing"           # در اختیار Orchestrator
+    WAITING_WAKE = "waiting_wake"
+    LISTENING = "listening"
+    FINALIZING = "finalizing"
+    PROCESSING = "processing"
     ERROR = "error"
 
 
@@ -78,12 +61,7 @@ UtteranceCallback = Callable[[AudioArtifact], Awaitable[None]]
 
 
 class AudioSession:
-    """
-    یک نشست صوتی متناظر با یک اتصال WebSocket.
-
-    مصرف‌کننده فقط `await feed(chunk)` را صدا می‌زند؛ همهٔ منطق
-    Wake Word، VAD، Pre-Roll و نهایی‌سازی داخل همین کلاس است.
-    """
+    """یک نشست صوتی متناظر با یک اتصال WebSocket."""
 
     def __init__(
         self,
@@ -93,16 +71,15 @@ class AudioSession:
         on_event: Optional[EventCallback] = None,
         on_utterance: Optional[UtteranceCallback] = None,
     ) -> None:
-        self.settings = settings or get_settings()
+        self.settings = (settings or get_settings()).model_copy(deep=True)
         self.session_id = session_id or uuid.uuid4().hex[:12]
         self.on_event = on_event
         self.on_utterance = on_utterance
+        self.reference_text: Optional[str] = None
 
         audio = self.settings.audio
         self.sample_rate = audio.sample_rate
         self.frame_bytes = audio.frame_bytes
-
-        # --- اجزا ---
         self._accumulator = FrameAccumulator(self.frame_bytes)
         self._pre_roll = PreRollBuffer(
             audio.pre_roll_seconds, audio.sample_rate, audio.channels)
@@ -119,7 +96,6 @@ class AudioSession:
             speech_timeout=self.settings.vad.post_wake_speech_timeout,
         )
 
-        # --- حالت ---
         self.state = SessionState.IDLE
         self.stats = SessionStats()
         self._recording = bytearray()
@@ -129,9 +105,7 @@ class AudioSession:
         self._listen_start = 0.0
         self._last_level = -96.0
 
-    # ------------------------------------------------------------------ API
     async def start(self) -> None:
-        """آغاز گوش دادن (منتظر Wake Word)."""
         self.state = (
             SessionState.WAITING_WAKE
             if self.settings.wake_word.enabled
@@ -150,14 +124,12 @@ class AudioSession:
         })
 
     async def stop(self) -> None:
-        """توقف نشست؛ اگر در حال ضبط بودیم، همان را نهایی می‌کند."""
         if self.state == SessionState.LISTENING and self._has_enough_audio():
             await self._finalize(reason="manual_stop")
         self.state = SessionState.IDLE
         await self._emit("session_stopped", self.stats.to_dict())
 
     async def feed(self, chunk: bytes) -> None:
-        """ورود داده از WebSocket (اندازهٔ دلخواه)."""
         if not chunk or self.state in (SessionState.IDLE, SessionState.ERROR):
             return
         self.stats.bytes_received += len(chunk)
@@ -166,7 +138,6 @@ class AudioSession:
             await self._process_frame(frame)
 
     async def trigger_wake(self) -> None:
-        """فعال‌سازی دستی از UI (دکمهٔ «شروع ضبط»)."""
         if self.state != SessionState.WAITING_WAKE:
             return
         ev = (self._wake.trigger()
@@ -175,7 +146,6 @@ class AudioSession:
         await self._on_wake(ev)
 
     async def cancel_utterance(self) -> None:
-        """لغو ضبط جاری و بازگشت به انتظار Wake Word."""
         self._reset_recording()
         self.state = (SessionState.WAITING_WAKE
                       if self.settings.wake_word.enabled else SessionState.LISTENING)
@@ -183,8 +153,31 @@ class AudioSession:
             self._begin_listening(from_wake=False)
         await self._emit("utterance_cancelled", {"state": self.state.value})
 
+    def set_reference(self, text: Optional[str]) -> None:
+        self.reference_text = (text or "").strip() or None
+
+    def apply_config_override(
+        self,
+        *,
+        vad_silence_duration: Optional[float] = None,
+        wakeword_enabled: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        changed: Dict[str, Any] = {}
+
+        if vad_silence_duration is not None and vad_silence_duration > 0:
+            self.settings.vad.silence_duration = vad_silence_duration
+            self._vad_gate.silence_duration = vad_silence_duration
+            changed["vad_silence_duration"] = vad_silence_duration
+
+        if wakeword_enabled is not None:
+            self.settings.wake_word.enabled = wakeword_enabled
+            changed["wakeword_enabled"] = wakeword_enabled
+            if not wakeword_enabled and self.state == SessionState.WAITING_WAKE:
+                self._begin_listening(from_wake=False)
+
+        return changed
+
     async def resume(self) -> None:
-        """بازگشت به گوش دادن پس از پایان Benchmark."""
         self._reset_recording()
         self.state = (SessionState.WAITING_WAKE
                       if self.settings.wake_word.enabled else SessionState.LISTENING)
@@ -192,12 +185,11 @@ class AudioSession:
             self._begin_listening(from_wake=False)
         await self._emit("listening_resumed", {"state": self.state.value})
 
-    # ------------------------------------------------------- internals
     async def _process_frame(self, frame: bytes) -> None:
         self._last_level = rms_dbfs(frame)
 
         if self.state == SessionState.WAITING_WAKE:
-            self._pre_roll.write(frame)          # ← همیشه در حال ضبط پس‌زمینه
+            self._pre_roll.write(frame)
             ev = self._wake.push(frame)
             if ev and ev.detected:
                 await self._on_wake(ev)
@@ -212,8 +204,6 @@ class AudioSession:
             await self._handle_vad(vad_event)
             return
 
-        # PROCESSING / FINALIZING → صدا دور ریخته می‌شود (عمدی)
-
     async def _on_wake(self, ev: WakeWordEvent) -> None:
         self.stats.wake_events += 1
         self._wake_time = time.time()
@@ -225,7 +215,6 @@ class AudioSession:
         })
 
     def _begin_listening(self, from_wake: bool) -> None:
-        """شروع ضبط فرمان + الصاق Pre-Roll (بند ۸)."""
         self._recording = bytearray()
         self._pre_roll_used = 0.0
 
@@ -266,18 +255,15 @@ class AudioSession:
         elif ev.type in (VADEventType.UTTERANCE_END, VADEventType.MAX_DURATION):
             await self._finalize(reason=ev.type.value, vad_event=ev)
 
-    # ------------------------------------------------------------------
     def _has_enough_audio(self) -> bool:
         duration = pcm16_duration(bytes(self._recording), self.sample_rate)
         return duration >= self.settings.audio.min_command_seconds
 
     async def _finalize(self, reason: str,
                         vad_event: Optional[VADEvent] = None) -> None:
-        """ساخت AudioArtifact نهایی و تحویل به Orchestrator."""
         self.state = SessionState.FINALIZING
         pcm = bytes(self._recording)
 
-        # حذف دُم سکوت (فقط انتها؛ ابتدا به‌خاطر Pre-Roll دست‌نخورده می‌ماند)
         if vad_event and vad_event.silence_duration > 0:
             keep = max(0.0, vad_event.silence_duration - 0.3)
             drop = int(keep * self.sample_rate) * SAMPLE_WIDTH
@@ -314,8 +300,8 @@ class AudioSession:
 
         if self.settings.audio.save_recordings:
             try:
-                artifact.save(self.settings.paths.recordings_path)
-            except Exception as exc:  # noqa: BLE001
+                artifact.save(self.settings.paths.recordings_dir)
+            except Exception as exc:
                 logger.warning("ذخیرهٔ فایل صوتی ناموفق بود: %s", exc)
 
         self.stats.utterances += 1
@@ -338,10 +324,9 @@ class AudioSession:
             try:
                 await self.on_event({"event": event_type,
                                      "session_id": self.session_id, **payload})
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug("ارسال رویداد «%s» ناموفق بود: %s", event_type, exc)
 
-    # ------------------------------------------------------------------
     def status(self) -> Dict[str, Any]:
         return {
             "session_id": self.session_id,
@@ -362,8 +347,6 @@ class AudioSession:
 
 
 class SessionManager:
-    """رجیستری نشست‌های فعال (چند تب مرورگر هم‌زمان)."""
-
     def __init__(self, settings: Optional[AppSettings] = None) -> None:
         self.settings = settings or get_settings()
         self._sessions: Dict[str, AudioSession] = {}

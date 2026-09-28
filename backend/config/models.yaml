@@ -21,7 +21,7 @@ models:
       best_of: 5
       temperature: 0.0
       condition_on_previous_text: false
-      vad_filter: false        # عمداً خاموش: VAD مستقل بیرون از مدل است
+      vad_filter: false
       without_timestamps: true
       cpu_threads: 4
     notes: "مدل پایه فارسی، سبک‌ترین گزینه برای Raspberry Pi 5"
@@ -53,13 +53,12 @@ models:
     notes: "دقت بالاتر، مصرف RAM بیشتر"
 
   # ------------------------- مدل ۳ (نمونه، غیرفعال) -------------------------
-  # آداپتور مرجع transformers — برای صحت‌سنجی خروجی CT2
   - id: "whisper-base-fa-hf"
     display_name: "Whisper Base FA (Transformers)"
     enabled: false
     runtime: "transformers_whisper"
     local_path: "models/hf/whisper-base-fa"
-    device: "auto"            # روی M1: mps
+    device: "auto"
     compute_type: "float32"
     order: 3
     source:
@@ -74,7 +73,6 @@ models:
     notes: "آداپتور مرجع؛ برای مقایسه صحت تبدیل CTranslate2"
 
   # ------------------------- مدل ۴ (نمونه، غیرفعال) -------------------------
-  # الگوی افزودن مدل پنجم/ششم — فقط کپی کن و مقادیر را عوض کن
   - id: "whisper-large-v3-fa-ct2"
     display_name: "Whisper Large-v3 FA (CT2/int8)"
     enabled: false
@@ -96,12 +94,10 @@ models:
       without_timestamps: true
     notes: "فقط برای MacBook؛ روی RPi5 8GB توصیه نمی‌شود"
 
-# ------------------------- مدل ۵ (Dummy همیشه‌حاضر) -------------------------
-  # مدل تشخیصی ثابت — برای Smoke Test سرور بدون نیاز به دانلود مدل واقعی.
-  # هرگز از رجیستری حذف نشود؛ در تست‌های سرتاسری (E2E) به آن وابسته‌ایم.
+  # ------------------------- مدل ۵ (Dummy) -------------------------
   - id: "dummy-echo"
     display_name: "پژواک آزمایشی (Dummy)"
-    enabled: true
+    enabled: false
     runtime: "dummy"
     local_path: "models/dummy"
     device: "cpu"

@@ -8,25 +8,18 @@ from typing import Any, Dict, Literal, Optional
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
-# ----------------------------------------------------------------------------
-# مسیرهای پایه
-# ----------------------------------------------------------------------------
 BACKEND_DIR: Path = Path(__file__).resolve().parent.parent
 PROJECT_ROOT: Path = BACKEND_DIR.parent
 
-_ENV_PREFIX = "ASRB_"          # مثال: ASRB_AUDIO__SAMPLE_RATE=8000
+_ENV_PREFIX = "ASRB_"
 _ENV_NESTED_SEP = "__"
 
 
-# ----------------------------------------------------------------------------
-# بخش‌های تنظیمات
-# ----------------------------------------------------------------------------
 class ServerSettings(BaseModel):
-    host: str = "127.0.0.1"           # عمداً localhost-only (بند ۴)
+    host: str = "127.0.0.1"
     port: int = 8000
     reload: bool = False
     log_level: str = "info"
-    # اگر True باشد، سرور اجازه bind روی 0.0.0.0 را می‌دهد (پیش‌فرض: ممنوع)
     allow_external_bind: bool = False
 
 
@@ -41,11 +34,9 @@ class PathSettings(BaseModel):
 
     @property
     def temp_path(self) -> Path:
-        """نام جایگزین برای سازگاری با کدهایی که از temp_path استفاده می‌کنند."""
         return self.temp_dir
 
     def resolve_all(self, root: Path) -> "PathSettings":
-        """تبدیل مسیرهای نسبی به مطلق نسبت به ریشه پروژه."""
         data = {}
         for name, value in self.model_dump().items():
             p = Path(value)
@@ -55,17 +46,18 @@ class PathSettings(BaseModel):
     def ensure_dirs(self) -> None:
         for name, value in self.model_dump().items():
             if name == "frontend_dir":
-                continue  # frontend باید از قبل وجود داشته باشد
+                continue
             Path(value).mkdir(parents=True, exist_ok=True)
+
 
 class AudioSettings(BaseModel):
     sample_rate: int = 16000
     channels: int = 1
-    sample_width: int = 2                 # int16
-    frame_ms: int = 20                    # اندازه فریم ورودی از مرورگر
-    max_command_seconds: float = 30.0     # سقف ایمنی طول فرمان
-    min_command_seconds: float = 0.30     # کمتر از این => «گفتاری یافت نشد»
-    pre_roll_seconds: float = 1.5         # بند ۸
+    sample_width: int = 2
+    frame_ms: int = 20
+    max_command_seconds: float = 30.0
+    min_command_seconds: float = 0.30
+    pre_roll_seconds: float = 1.5
     save_recordings: bool = True
     recording_format: Literal["wav"] = "wav"
 
@@ -87,53 +79,45 @@ class AudioSettings(BaseModel):
 
 class VADSettings(BaseModel):
     engine: Literal["webrtc", "silero", "energy"] = "webrtc"
-    aggressiveness: int = Field(2, ge=0, le=3)       # فقط webrtc
-    silence_duration: float = 2.0                    # بند ۹ — SILENCE_DURATION
-    speech_start_frames: int = 3                     # چند فریم متوالی = شروع گفتار
-    energy_threshold_dbfs: float = -45.0             # فقط موتور energy    
+    aggressiveness: int = Field(2, ge=0, le=3)
+    silence_duration: float = 2.0
+    speech_start_frames: int = 3
+    energy_threshold_dbfs: float = -45.0
     silero_model_path: Path = Path("models/vad/silero_vad.onnx")
-    # اگر تا این مدت بعد از Wake Word هیچ گفتاری نیامد => timeout
     post_wake_speech_timeout: float = 6.0
 
 
 class WakeWordSettings(BaseModel):
     enabled: bool = True
-    word: str = "آرینا"                               # بند ۱۹ — WAKE_WORD
+    word: str = "آرینا"
     engine: Literal["vosk", "dtw", "manual"] = "vosk"
-    # لیست تلفظ‌های پذیرفته‌شده (بعد از نرمال‌سازی) برای موتور مبتنی بر متن
     aliases: list[str] = Field(default_factory=lambda: ["آرینا", "ارینا", "آرینه", "ارینا"])
     vosk_model_path: Path = Path("models/wakeword/vosk-model-small-fa")
     dtw_templates_dir: Path = Path("models/wakeword/dtw_templates")
     dtw_threshold: float = 0.42
-    cooldown_seconds: float = 1.5                    # جلوگیری از trigger مکرر
-    # تایم‌اوت انتظار برای Wake Word (بند ۲۳) — 0 یعنی بی‌نهایت
+    cooldown_seconds: float = 1.5
     listen_timeout: float = 0.0
 
 
 class BenchmarkSettings(BaseModel):
-    mode: Literal["sequential", "parallel"] = "sequential"   # بند ۱۲
-    runs_per_utterance: int = 1          # در UI قابل تغییر؛ توصیه ۳ تا ۵ (بند ۲۲)
-    warmup_enabled: bool = True
-    warmup_audio_seconds: float = 1.0
-    rotate_model_order: bool = True      # بند ۱۳ — جلوگیری از bias ترتیب
-    rotation_strategy: Literal["rotate", "shuffle"] = "rotate"
-    worker_timeout_seconds: float = 300.0
-    isolate_workers: bool = True         # هر مدل در پروسه مستقل
-    sample_ram_interval: float = 0.05    # فاصله نمونه‌برداری Peak RSS
-    runs_per_model: int = 1               # تعداد تکرار برای میانگین‌گیری
+    mode: Literal["sequential", "parallel"] = "sequential"
+    runs_per_model: int = 1
     warmup_enabled: bool = True
     warmup_seconds: float = 1.0
-    model_timeout: float = 300.0          # مهلت هر مدل (ثانیه)
-    mp_context: str = "spawn"             # هرگز fork
+    rotate_model_order: bool = True
+    rotation_strategy: Literal["rotate", "shuffle"] = "rotate"
+    model_timeout: float = 300.0
+    isolate_workers: bool = True
+    mp_context: str = "spawn"
     ram_sample_interval: float = 0.05
-    isolated: bool = True
+
 
 class NormalizerSettings(BaseModel):
     profile: Literal["default", "strict", "light"] = "default"
     zwnj_policy: Literal["keep", "space", "remove"] = "space"
     remove_punctuation: bool = True
     unify_alef_hamza: bool = True
-    unify_alef_madda: bool = False       # آ -> ا (پیش‌فرض خاموش: تفاوت معنایی)
+    unify_alef_madda: bool = False
     digits_to: Literal["ascii", "persian", "keep"] = "ascii"
     remove_diacritics: bool = True
 
@@ -147,10 +131,9 @@ class UISettings(BaseModel):
 
 
 class AppSettings(BaseModel):
-    """ریشه تنظیمات."""
-    offline_mode: bool = True            # بند ۱۹ — OFFLINE_MODE
-    language: str = "fa"                 # بند ۱۹ — LANGUAGE
-    strict_offline_guard: bool = True    # مسدودسازی فعال socket خارجی در runtime
+    offline_mode: bool = True
+    language: str = "fa"
+    strict_offline_guard: bool = True
 
     server: ServerSettings = Field(default_factory=ServerSettings)
     paths: PathSettings = Field(default_factory=PathSettings)
@@ -163,15 +146,11 @@ class AppSettings(BaseModel):
 
     models_config_file: Path = Path("backend/config/models.yaml")
 
-    # ------------------------------------------------------------------
     def absolute(self, p: Path | str) -> Path:
         p = Path(p)
         return p if p.is_absolute() else (PROJECT_ROOT / p)
 
 
-# ----------------------------------------------------------------------------
-# بارگذاری / ادغام
-# ----------------------------------------------------------------------------
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(base)
     for k, v in override.items():
@@ -183,7 +162,6 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 
 
 def _coerce(raw: str) -> Any:
-    """تبدیل مقدار رشته‌ای ENV به نوع پایتونی."""
     low = raw.strip().lower()
     if low in ("true", "yes", "on"):
         return True
@@ -198,11 +176,6 @@ def _coerce(raw: str) -> Any:
 
 
 def _env_overrides() -> Dict[str, Any]:
-    """
-    ASRB_OFFLINE_MODE=false
-    ASRB_VAD__SILENCE_DURATION=1.5
-    ASRB_WAKE_WORD__WORD=آرینا
-    """
     result: Dict[str, Any] = {}
     for key, value in os.environ.items():
         if not key.startswith(_ENV_PREFIX):
@@ -229,7 +202,6 @@ _settings_cache: Optional[AppSettings] = None
 
 
 def get_settings(config_path: Optional[Path] = None) -> AppSettings:
-    """تنظیمات را (با کش) برمی‌گرداند."""
     global _settings_cache
     if _settings_cache is not None and config_path is None:
         return _settings_cache
@@ -238,7 +210,6 @@ def get_settings(config_path: Optional[Path] = None) -> AppSettings:
     merged = _deep_merge(_load_yaml(path), _env_overrides())
     settings = AppSettings(**merged)
 
-    # مسیرها را مطلق کن و بساز
     settings.paths = settings.paths.resolve_all(PROJECT_ROOT)
     settings.paths.ensure_dirs()
 
@@ -253,9 +224,6 @@ def reload_settings(config_path: Optional[Path] = None) -> AppSettings:
     return get_settings(config_path)
 
 
-# ----------------------------------------------------------------------------
-# گارد آفلاین (بند ۴)
-# ----------------------------------------------------------------------------
 _OFFLINE_ENV = {
     "HF_HUB_OFFLINE": "1",
     "TRANSFORMERS_OFFLINE": "1",
@@ -269,10 +237,6 @@ _OFFLINE_ENV = {
 
 
 def ensure_offline_env(strict_socket_guard: bool = False) -> None:
-    """
-    باید در ابتدای main.py و ابتدای هر Worker Process صدا زده شود،
-    *قبل* از import کتابخانه‌های HuggingFace.
-    """
     for k, v in _OFFLINE_ENV.items():
         os.environ.setdefault(k, v)
 
@@ -285,8 +249,9 @@ _ALLOWED_HOSTS = {"127.0.0.1", "::1", "localhost", "0.0.0.0"}
 
 def _install_socket_guard() -> None:
     """
-    اتصال TCP به هر مقصدی جز localhost را در runtime مسدود می‌کند.
-    این تضمین سخت‌افزاریِ «هیچ Runtime Dependency به اینترنت» است.
+    گارد سطح Python برای جلوگیری از اتصال و DNS خارجی.
+    این جایگزین sandbox شبکهٔ سطح سیستم‌عامل نیست؛ تست پذیرش نهایی با شبکه
+    خاموش انجام می‌شود.
     """
     import socket
 
@@ -295,6 +260,7 @@ def _install_socket_guard() -> None:
 
     original_connect = socket.socket.connect
     original_connect_ex = socket.socket.connect_ex
+    original_getaddrinfo = socket.getaddrinfo
 
     def _check(address: Any) -> None:
         if isinstance(address, tuple) and address:
@@ -304,14 +270,22 @@ def _install_socket_guard() -> None:
                     f"[OFFLINE GUARD] اتصال شبکه‌ای به «{host}» در حالت آفلاین مسدود است."
                 )
 
-    def guarded_connect(self, address):          # type: ignore[no-untyped-def]
+    def guarded_connect(self, address):
         _check(address)
         return original_connect(self, address)
 
-    def guarded_connect_ex(self, address):       # type: ignore[no-untyped-def]
+    def guarded_connect_ex(self, address):
         _check(address)
         return original_connect_ex(self, address)
 
-    socket.socket.connect = guarded_connect          # type: ignore[assignment]
-    socket.socket.connect_ex = guarded_connect_ex    # type: ignore[assignment]
-    socket.socket._asrb_guarded = True               # type: ignore[attr-defined]
+    def guarded_getaddrinfo(host, port, *args, **kwargs):
+        if host is not None and str(host) not in _ALLOWED_HOSTS:
+            raise OSError(
+                f"[OFFLINE GUARD] یافتن آدرس («{host}») در حالت آفلاین مسدود است."
+            )
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    socket.socket.connect = guarded_connect
+    socket.socket.connect_ex = guarded_connect_ex
+    socket.getaddrinfo = guarded_getaddrinfo
+    socket.socket._asrb_guarded = True

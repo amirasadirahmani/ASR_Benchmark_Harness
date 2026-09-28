@@ -16,8 +16,10 @@ logs/**
 !logs/.gitkeep
 .cache/
 
-frontend/vendor/**
-!frontend/vendor/.gitkeep
-
 .DS_Store
 .pytest_cache/
+
+data/temp/**
+!data/temp/.gitkeep
+requirements-macos.txt
+*.log

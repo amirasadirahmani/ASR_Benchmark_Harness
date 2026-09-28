@@ -9,8 +9,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.config.settings import PROJECT_ROOT
 
-# ---------------------------------------------------------------------------
-
 DeviceType = Literal["auto", "cpu", "cuda", "mps"]
 ComputeType = Literal[
     "int8", "int8_float16", "int8_bfloat16",
@@ -19,10 +17,7 @@ ComputeType = Literal[
 
 
 class ModelSource(BaseModel):
-    """
-    محل تهیه مدل.
-    فقط توسط scripts/setup_models.py استفاده می‌شود؛ هرگز در Runtime.
-    """
+    """محل تهیه مدل؛ فقط در setup استفاده می‌شود، نه Runtime."""
     type: Literal["huggingface", "local", "url"] = "local"
     repo_id: Optional[str] = None
     url: Optional[str] = None
@@ -40,17 +35,12 @@ class ModelSource(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    """
-    پیکربندی یک مدل ASR.
-
-    افزودن مدل جدید = افزودن یک بلاک به backend/config/models.yaml
-    (بند ۱۱ پروپوزال). هیچ تغییری در UI/Metrics/CSV/Orchestrator لازم نیست.
-    """
+    """پیکربندی یک مدل ASR."""
 
     id: str
     display_name: str
     enabled: bool = True
-    runtime: str                       # کلید ثبت‌شده در AdapterRegistry
+    runtime: str
     local_path: Path
     device: DeviceType = "auto"
     compute_type: ComputeType = "int8"
@@ -58,12 +48,9 @@ class ModelConfig(BaseModel):
     source: ModelSource = Field(default_factory=ModelSource)
     params: Dict[str, Any] = Field(default_factory=dict)
     notes: str = ""
-
-    # حدود ایمنی اختیاری برای هشدار روی RPi5
     expected_ram_mb: Optional[float] = None
     min_free_ram_mb: Optional[float] = None
 
-    # -------------------------------------------------- validators
     @field_validator("id")
     @classmethod
     def _valid_id(cls, v: str) -> str:
@@ -81,15 +68,12 @@ class ModelConfig(BaseModel):
     def _as_path(cls, v: Any) -> Path:
         return Path(v)
 
-    # -------------------------------------------------- helpers
     @property
     def absolute_path(self) -> Path:
-        """مسیر مطلق مدل روی دیسک."""
         p = self.local_path
         return p if p.is_absolute() else (PROJECT_ROOT / p)
 
     def exists(self) -> bool:
-        """آیا فایل‌های مدل روی دیسک موجود است؟"""
         p = self.absolute_path
         if not p.exists():
             return False
@@ -97,32 +81,22 @@ class ModelConfig(BaseModel):
             return any(p.iterdir())
         return True
 
-    def resolve_device(self) -> str:
-        """
-        تبدیل device='auto' به دستگاه واقعی، بدون import کردن torch.
+    _CPU_ONLY_RUNTIMES = frozenset({"faster_whisper", "dummy"})
 
-        استراتژی:
-          - اگر کاربر صریحاً دستگاهی داده، همان برگردد.
-          - در غیر این صورت 'cpu' (امن‌ترین و تنها گزینهٔ قطعی روی RPi5).
-            آداپتورهایی که شتاب‌دهنده دارند (مثل transformers/mps) خودشان
-            در زمان بارگذاری ارتقا می‌دهند.
-        """
+    def resolve_device(self) -> str:
         if self.device != "auto":
             return self.device
-        return "cpu"
+        if self.runtime in self._CPU_ONLY_RUNTIMES:
+            return "cpu"
+        return "auto"
 
     def effective_compute_type(self) -> str:
-        """
-        اصلاح compute_type ناسازگار با CPU.
-        float16 روی CPU در CTranslate2 پشتیبانی نمی‌شود → به int8 تنزل می‌یابد.
-        """
         device = self.resolve_device()
         if device == "cpu" and self.compute_type in ("float16", "bfloat16"):
             return "int8"
         return self.compute_type
 
     def safe_cpu_threads(self) -> int:
-        """تعداد thread پیشنهادی؛ اگر در params نبود، بر اساس سخت‌افزار."""
         if "cpu_threads" in self.params:
             return int(self.params["cpu_threads"])
         try:
@@ -133,7 +107,6 @@ class ModelConfig(BaseModel):
         return max(1, min(cores, 4))
 
     def to_public_dict(self) -> Dict[str, Any]:
-        """نمایش امن برای ارسال به UI (بدون جزئیات مسیر محلی)."""
         return {
             "id": self.id,
             "display_name": self.display_name,
@@ -147,10 +120,6 @@ class ModelConfig(BaseModel):
         }
 
     def to_worker_payload(self) -> Dict[str, Any]:
-        """
-        دیکشنری کاملاً picklable برای ارسال به Worker Process.
-        (spawn روی macOS نیاز دارد همه چیز serializable باشد)
-        """
         return {
             "id": self.id,
             "display_name": self.display_name,
@@ -163,9 +132,6 @@ class ModelConfig(BaseModel):
         }
 
 
-# ---------------------------------------------------------------------------
-# بارگذاری رجیستری
-# ---------------------------------------------------------------------------
 class ModelRegistryFile(BaseModel):
     models: List[ModelConfig] = Field(default_factory=list)
 
@@ -185,16 +151,10 @@ def load_model_configs(
     enabled_only: bool = False,
     available_only: bool = False,
 ) -> List[ModelConfig]:
-    """
-    رجیستری مدل‌ها را از YAML می‌خواند و بر اساس order مرتب برمی‌گرداند.
-
-    Args:
-        path: مسیر فایل YAML (پیش‌فرض backend/config/models.yaml)
-        enabled_only: فقط مدل‌های enabled=true
-        available_only: فقط مدل‌هایی که فایل‌هایشان روی دیسک موجود است
-    """
     if path is None:
-        path = PROJECT_ROOT / "backend" / "config" / "models.yaml"
+        from backend.config.settings import get_settings
+        cfg_path = get_settings().models_config_file
+        path = cfg_path if cfg_path.is_absolute() else PROJECT_ROOT / cfg_path
     path = Path(path)
 
     if not path.exists():
@@ -220,7 +180,6 @@ def load_model_configs(
 
 
 def get_model_config(model_id: str, path: Optional[Path] = None) -> ModelConfig:
-    """یک مدل مشخص را بر اساس شناسه برمی‌گرداند."""
     for m in load_model_configs(path):
         if m.id == model_id:
             return m
@@ -228,7 +187,6 @@ def get_model_config(model_id: str, path: Optional[Path] = None) -> ModelConfig:
 
 
 def describe_environment() -> Dict[str, Any]:
-    """اطلاعات محیط اجرا — برای درج در گزارش نتایج (بند ۲۱)."""
     import os
     info: Dict[str, Any] = {
         "platform": platform.platform(),

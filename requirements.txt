@@ -21,10 +21,12 @@ torch==2.5.1
 torchaudio==2.5.1
 
 # ---------- Wake word engine (optional, offline) ----------
-vosk==0.3.45
+vosk==0.3.43; sys_platform == "darwin"
+vosk==0.3.45; sys_platform != "darwin"
 
 # ---------- Optional: silero VAD via onnx ----------
 onnxruntime==1.20.1
 
 # ---------- Dev / Test ----------
 pytest==8.3.4
+pytest-asyncio==0.25.2
