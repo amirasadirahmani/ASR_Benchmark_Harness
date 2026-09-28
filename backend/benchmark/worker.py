@@ -112,11 +112,13 @@ def _configure_worker_env(threads: int) -> None:
                 "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         os.environ[var] = value
 
-    # قفل آفلاین — حتی اگر کتابخانه‌ای تلاش به دانلود کند، رد می‌شود (بند ۴)
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    os.environ["HF_DATASETS_OFFLINE"] = "1"
-    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    # هر Worker با spawn یک مفسر تازه است؛ گارد آفلاین باید اینجا دوباره نصب شود.
+    from backend.config.settings import ensure_offline_env, get_settings
+    try:
+        strict = get_settings().strict_offline_guard
+    except Exception:
+        strict = True
+    ensure_offline_env(strict_socket_guard=strict)
 
 
 def _worker_main(request_dict: Dict[str, Any], result_queue: "mp.Queue") -> None:
